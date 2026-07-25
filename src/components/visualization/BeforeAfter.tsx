@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { generateAIPreview } from '../../services/api'
+import { generateAIPreview, getAssetURL } from '../../services/api'
 
 interface Region {
   id: string
@@ -113,7 +113,7 @@ export default function BeforeAfter({
       const canvas = document.createElement('canvas')
       const img = new Image()
       img.crossOrigin = 'anonymous'
-      img.src = `/uploads/${imagePath}`
+      img.src = getAssetURL(`/uploads/${imagePath}`)
 
       await new Promise<void>((resolve, reject) => {
         img.onload = () => {
@@ -346,7 +346,7 @@ export default function BeforeAfter({
             className="comparison-slider relative w-full h-[400px] sm:h-[480px] overflow-hidden rounded-2xl bg-[#090e1a] cursor-ew-resize select-none border border-[#1e2a45] shadow-2xl"
           >
             <img
-              src={`/uploads/${imagePath}`}
+              src={getAssetURL(`/uploads/${imagePath}`)}
               alt="Original Exterior"
               className="absolute top-0 left-0 w-full h-full object-contain pointer-events-none"
             />
@@ -355,7 +355,7 @@ export default function BeforeAfter({
               style={{ width: `${sliderPos}%` }}
             >
               <img
-                src={preview}
+                src={getAssetURL(preview)}
                 alt="Redesigned Exterior"
                 className="absolute top-0 left-0 h-full max-w-none object-contain pointer-events-none"
                 style={{ width: containerWidth ? `${containerWidth}px` : '100%' }}

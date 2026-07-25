@@ -1,5 +1,5 @@
 import { useState, useRef, DragEvent } from 'react'
-import api from '../../services/api'
+import api, { getAssetURL } from '../../services/api'
 
 interface Props {
   onUploaded: (filename: string) => void
@@ -9,7 +9,7 @@ interface Props {
 export default function ImageUploader({ onUploaded, existingImage }: Props) {
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [preview, setPreview] = useState(existingImage ? `/uploads/${existingImage}` : '')
+  const [preview, setPreview] = useState(existingImage ? getAssetURL(`/uploads/${existingImage}`) : '')
   const [error, setError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 

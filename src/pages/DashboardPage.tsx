@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import api from '../services/api'
+import api, { getAssetURL } from '../services/api'
 
 interface Project {
   id: number
@@ -107,7 +107,7 @@ export default function DashboardPage() {
                 <div style={{ height: 176, background: '#090d16', position: 'relative', overflow: 'hidden', borderBottom: '1px solid #1f2937', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {p.original_image ? (
                     <img
-                      src={`/uploads/${p.original_image}`}
+                      src={getAssetURL(`/uploads/${p.original_image}`)}
                       alt={p.name}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       onError={(e) => {

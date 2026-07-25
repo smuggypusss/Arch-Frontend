@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import api from '../../services/api'
+import api, { getAssetURL } from '../../services/api'
 
 interface Region {
   id: string
@@ -48,7 +48,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
   useEffect(() => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
-    img.src = `/uploads/${imagePath}`
+    img.src = getAssetURL(`/uploads/${imagePath}`)
     img.onload = () => {
       imgRef.current = img
       setImageLoaded(true)

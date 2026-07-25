@@ -15,6 +15,28 @@ const getBaseURL = () => {
   return '/api'
 }
 
+export const getAssetURL = (path: string) => {
+  if (!path) return ''
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:') || path.startsWith('blob:')) {
+    return path
+  }
+  // If we are in local development and not using a remote backend, use relative path
+  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    const envUrl = import.meta.env.VITE_API_URL
+    if (!envUrl) {
+      return path
+    }
+  }
+  
+  const envUrl = import.meta.env.VITE_API_URL
+  const baseUrl = envUrl 
+    ? (envUrl.endsWith('/api') ? envUrl.slice(0, -4) : envUrl)
+    : 'https://arch-backend-133093946118.europe-west1.run.app'
+  
+  const cleanPath = path.startsWith('/') ? path : `/${path}`
+  return `${baseUrl}${cleanPath}`
+}
+
 const api = axios.create({
   baseURL: getBaseURL(),
   headers: { 'Content-Type': 'application/json' },
