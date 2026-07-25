@@ -35,7 +35,7 @@ const btnBase: React.CSSProperties = {
   alignItems: 'center', gap: 8, transition: 'all 0.15s',
 }
 
-const VERTEX_HIT_THRESHOLD = 16 // pixels in image coordinates
+const VERTEX_HIT_THRESHOLD = 45 // pixels in image coordinates
 
 function pointInPolygon(x: number, y: number, polygon: { x: number; y: number }[]): boolean {
   let inside = false
@@ -127,11 +127,11 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
       if (isSelected) {
         polygon.forEach((p: { x: number; y: number }) => {
           ctx.beginPath()
-          ctx.arc(p.x, p.y, 6, 0, 2 * Math.PI)
+          ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI)
           ctx.fillStyle = '#f5a623'
           ctx.fill()
           ctx.strokeStyle = '#fff'
-          ctx.lineWidth = 2
+          ctx.lineWidth = 3
           ctx.stroke()
         })
       }
