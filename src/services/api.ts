@@ -2,8 +2,10 @@ import axios from 'axios'
 
 // Use VITE_API_URL environment variable in production, fall back to /api proxy in dev
 const getBaseURL = () => {
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL
+  const envUrl = import.meta.env.VITE_API_URL
+  if (envUrl) {
+    // If the configured URL is missing the '/api' prefix, append it automatically
+    return envUrl.endsWith('/api') ? envUrl : `${envUrl}/api`
   }
   // Bulletproof fallback to the live Cloud Run backend URL if running on a deployed cloud host
   if (typeof window !== 'undefined' && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1')) {
