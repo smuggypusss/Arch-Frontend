@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { getAssetURL } from '../../services/api'
 
 interface Region {
   id: string
@@ -26,6 +27,7 @@ interface Material {
 interface Props {
   regions: Region[]
   materials: Material[]
+  imagePath: string
   onAssign: (regionId: string, materialId: string | null) => void
   onBack: () => void
   onContinue: () => void
@@ -36,6 +38,10 @@ const REGION_LABELS: Record<string, string> = {
   wall: 'Wall', window: 'Window', balcony: 'Balcony', pillar: 'Pillar',
   parapet: 'Parapet', gate: 'Gate', roof: 'Roof',
 }
+const REGION_COLORS: Record<string, string> = {
+  wall: '#f5a623', window: '#10b981', balcony: '#3b82f6', pillar: '#ec4899',
+  parapet: '#8b5cf6', gate: '#f43f5e', roof: '#06b6d4',
+}
 
 const chipBase: React.CSSProperties = {
   padding: '6px 12px', borderRadius: 10, fontSize: 11, fontWeight: 700,
@@ -43,9 +49,55 @@ const chipBase: React.CSSProperties = {
   color: '#94a3b8', transition: 'all 0.15s', textTransform: 'capitalize',
 }
 
-export default function MaterialCatalog({ regions, materials, onAssign, onBack, onContinue }: Props) {
+export default function MaterialCatalog({ regions, materials, imagePath, onAssign, onBack, onContinue }: Props) {
   const [selectedRegion, setSelectedRegion] = useState<string | null>(regions[0]?.id || null)
   const [regionFilter, setRegionFilter] = useState<string>('')
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const imgRef = useRef<HTMLImageElement | null>(null)
+
+  // Load image and draw preview whenever regions or selectedRegion changes
+  useEffect(() => {
+    if (!imagePath) return
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = getAssetURL(`/uploads/${imagePath}`)
+    img.onload = () => {
+      imgRef.current = img
+      drawPreview()
+    }
+  }, [imagePath])
+
+  const drawPreview = () => {
+    const canvas = canvasRef.current
+    const img = imgRef.current
+    if (!canvas || !img) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    canvas.width = img.width
+    canvas.height = img.height
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(img, 0, 0)
+
+    regions.forEach((region) => {
+      if (region.polygon.length < 2) return
+      const color = REGION_COLORS[region.type] || '#f5a623'
+      const isHighlighted = region.id === selectedRegion
+      ctx.beginPath()
+      ctx.moveTo(region.polygon[0].x, region.polygon[0].y)
+      for (let i = 1; i < region.polygon.length; i++) ctx.lineTo(region.polygon[i].x, region.polygon[i].y)
+      ctx.closePath()
+      ctx.fillStyle = color + (isHighlighted ? '80' : '30')
+      ctx.fill()
+      ctx.strokeStyle = isHighlighted ? '#ffffff' : color
+      ctx.lineWidth = isHighlighted ? 4 : 2
+      ctx.stroke()
+    })
+  }
+
+  // Redraw when selectedRegion changes
+  useEffect(() => {
+    drawPreview()
+  }, [selectedRegion])
 
   const region = regions.find((r) => r.id === selectedRegion)
   const activeFilter = regionFilter || region?.type || ''
@@ -65,7 +117,7 @@ export default function MaterialCatalog({ regions, materials, onAssign, onBack, 
             Choose Materials & Textures
           </h2>
           <p style={{ color: '#94a3b8', fontSize: 13, margin: 0 }}>
-            Materials are filtered by the selected surface region type.
+            Click a surface region below to highlight it on the preview. Materials are filtered by the selected surface type.
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#111827', border: '1px solid #1f2937', padding: '8px 14px', borderRadius: 12 }}>
@@ -87,6 +139,7 @@ export default function MaterialCatalog({ regions, materials, onAssign, onBack, 
           {regions.map((r, i) => {
             const mat = materials.find((m) => String(m.id) === r.selected_material)
             const isSel = selectedRegion === r.id
+            const color = REGION_COLORS[r.type] || '#f5a623'
             return (
               <button
                 key={r.id}
@@ -100,7 +153,10 @@ export default function MaterialCatalog({ regions, materials, onAssign, onBack, 
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#ffffff', fontWeight: 700, textTransform: 'capitalize' }}>#{i + 1} {r.type}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                    <span style={{ color: '#ffffff', fontWeight: 700, textTransform: 'capitalize' }}>#{i + 1} {r.type}</span>
+                  </span>
                   {mat ? (
                     <span style={{ fontSize: 9, background: 'rgba(16,185,129,0.15)', color: '#6ee7b7', border: '1px solid rgba(16,185,129,0.4)', borderRadius: 999, padding: '2px 8px', fontWeight: 700 }}>
                       Assigned
@@ -119,6 +175,17 @@ export default function MaterialCatalog({ regions, materials, onAssign, onBack, 
               </button>
             )
           })}
+
+          {/* House Preview */}
+          <div style={{ marginTop: 'auto', background: '#090d16', border: '1px solid #1f2937', borderRadius: 14, overflow: 'hidden', minHeight: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <canvas
+              ref={canvasRef}
+              style={{ maxWidth: '100%', height: 'auto', maxHeight: 280, display: imgRef.current ? 'block' : 'none' }}
+            />
+            {!imgRef.current && (
+              <div style={{ color: '#64748b', fontSize: 12 }}>Loading preview...</div>
+            )}
+          </div>
         </div>
 
         {/* Material Grid */}

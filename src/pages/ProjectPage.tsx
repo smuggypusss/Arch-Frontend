@@ -212,6 +212,7 @@ export default function ProjectPage() {
           <MaterialCatalog
             regions={project.regions || []}
             materials={materials}
+            imagePath={imagePath}
             onAssign={handleMaterialAssigned}
             onBack={() => setActiveStep(1)}
             onContinue={() => setActiveStep(3)}
