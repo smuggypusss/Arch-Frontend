@@ -500,7 +500,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
               opacity: detecting ? 0.6 : 1,
             }}
           >
-            {detecting ? '⏳ Detecting...' : '🤖 Auto-Detect Surfaces'}
+            {detecting ? '⏳ Detecting...' : 'Auto-Detect Surfaces'}
           </button>
           <button
             onClick={() => { setBboxDrawing(true); setBboxStart(null); setCurrentRect(null); setSelectedRegionId(null); setEditingRegionId(null); setEditingPolygon(null); editingVertexRef.current = null }}
@@ -536,7 +536,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
                 opacity: refining ? 0.6 : 1,
               }}
             >
-              {refining ? '⏳ Refining...' : '🤖 Refine with AI'}
+              {refining ? '⏳ Refining...' : 'Refine with AI'}
             </button>
           )}
           {drawing && (
@@ -599,8 +599,8 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
         </div>
       )}
 
-      {/* Canvas */}
-      <div style={{ borderRadius: 14, overflow: 'hidden', border: '1px solid #1f2937', background: '#090d16', minHeight: 350, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {/* Canvas - overflow:visible so padding area (with edge vertex handles) is clickable */}
+      <div style={{ borderRadius: 14, overflow: 'visible', border: '1px solid #1f2937', background: '#090d16', minHeight: 350, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {!imageLoaded && (
           <div style={{ color: '#64748b', fontSize: 13 }}>Loading building image for mapping...</div>
         )}
@@ -612,7 +612,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
           onMouseMove={handleCanvasMouseMove}
           onMouseUp={handleCanvasMouseUp}
           onMouseLeave={handleCanvasMouseUp}
-          style={{ width: '100%', height: 'auto', cursor: drawing ? 'crosshair' : (bboxDrawing ? 'crosshair' : (editingPolygon ? 'grabbing' : 'pointer')), maxHeight: 520, objectFit: 'contain', display: imageLoaded ? 'block' : 'none' }}
+          style={{ maxWidth: '100%', height: 'auto', cursor: drawing ? 'crosshair' : (bboxDrawing ? 'crosshair' : (editingPolygon ? 'grabbing' : 'pointer')), maxHeight: 520, display: imageLoaded ? 'block' : 'none' }}
         />
       </div>
 
