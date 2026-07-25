@@ -62,8 +62,13 @@ api.interceptors.response.use(
   }
 )
 
-export const generateAIPreview = async (imagePath: string, regions: { type: string; selected_material: string }[]) => {
+export const generateAIPreview = async (imagePath: string, regions: { type: string; selected_material: string; polygon?: { x: number; y: number }[] }[]) => {
   const response = await api.post('/ai/generate-preview', { image_path: imagePath, regions })
+  return response.data
+}
+
+export const refineRegions = async (imagePath: string, regions: { type: string; polygon: { x: number; y: number }[] }[]) => {
+  const response = await api.post('/ai/refine-regions', { image_path: imagePath, regions })
   return response.data
 }
 

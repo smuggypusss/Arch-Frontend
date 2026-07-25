@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import api, { getAssetURL } from '../../services/api'
+import api, { getAssetURL, refineRegions } from '../../services/api'
 
 interface Region {
   id: string
@@ -35,6 +35,32 @@ const btnBase: React.CSSProperties = {
   alignItems: 'center', gap: 8, transition: 'all 0.15s',
 }
 
+const VERTEX_HIT_THRESHOLD = 12 // pixels (in image coordinates, scaled)
+
+function pointInPolygon(x: number, y: number, polygon: { x: number; y: number }[]): boolean {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y
+    const xj = polygon[j].x, yj = polygon[j].y
+    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
+function getVertexAtPoint(
+  x: number, y: number,
+  polygon: { x: number; y: number }[],
+  threshold: number,
+): number | null {
+  for (let i = 0; i < polygon.length; i++) {
+    const dx = polygon[i].x - x
+    const dy = polygon[i].y - y
+    if (Math.sqrt(dx * dx + dy * dy) <= threshold) return i
+  }
+  return null
+}
+
 export default function RegionCanvas({ imagePath, regions, onRegionsChange, onContinue }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -44,6 +70,11 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
   const [imageLoaded, setImageLoaded] = useState(false)
   const [detecting, setDetecting] = useState(false)
   const [detectError, setDetectError] = useState('')
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null)
+  const [draggingVertex, setDraggingVertex] = useState<{ regionId: string; vertexIndex: number } | null>(null)
+  const [refining, setRefining] = useState(false)
+  const [refineError, setRefineError] = useState('')
 
   useEffect(() => {
     const img = new Image()
@@ -68,14 +99,15 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
       if (region.polygon.length < 2) return
       const typeInfo = REGION_TYPES.find((t) => t.value === region.type)
       const color = typeInfo?.color || '#f5a623'
+      const isSelected = region.id === selectedRegionId
       ctx.beginPath()
       ctx.moveTo(region.polygon[0].x, region.polygon[0].y)
       for (let i = 1; i < region.polygon.length; i++) ctx.lineTo(region.polygon[i].x, region.polygon[i].y)
       ctx.closePath()
-      ctx.fillStyle = color + '40'
+      ctx.fillStyle = color + (isSelected ? '60' : '40')
       ctx.fill()
-      ctx.strokeStyle = color
-      ctx.lineWidth = 3
+      ctx.strokeStyle = isSelected ? '#ffffff' : color
+      ctx.lineWidth = isSelected ? 4 : 3
       ctx.stroke()
       const avgX = region.polygon.reduce((s, p) => s + p.x, 0) / region.polygon.length
       const avgY = region.polygon.reduce((s, p) => s + p.y, 0) / region.polygon.length
@@ -85,6 +117,19 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
       ctx.shadowBlur = 4
       ctx.fillText(typeInfo?.label || region.type, avgX - 25, avgY)
       ctx.shadowBlur = 0
+
+      // Draw vertex handles for selected region
+      if (isSelected && selectMode) {
+        region.polygon.forEach((p) => {
+          ctx.beginPath()
+          ctx.arc(p.x, p.y, 6, 0, 2 * Math.PI)
+          ctx.fillStyle = '#f5a623'
+          ctx.fill()
+          ctx.strokeStyle = '#fff'
+          ctx.lineWidth = 2
+          ctx.stroke()
+        })
+      }
     })
     if (currentPolygon.length > 0) {
       ctx.beginPath()
@@ -105,7 +150,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
         ctx.stroke()
       })
     }
-  }, [regions, currentPolygon])
+  }, [regions, currentPolygon, selectedRegionId, selectMode])
 
   useEffect(() => { if (imageLoaded) drawAll() }, [imageLoaded, drawAll])
 
@@ -118,11 +163,50 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
     return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY }
   }
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handleCanvasClick = (e: React.MouseEvent) => {
     if (drawing) {
       const { x, y } = getCanvasCoords(e)
       setCurrentPolygon((prev) => [...prev, { x, y }])
+      return
     }
+    if (selectMode) {
+      const { x, y } = getCanvasCoords(e)
+      if (draggingVertex) return // don't select on click if we were dragging
+      const clickedRegion = regions.find((r) => pointInPolygon(x, y, r.polygon))
+      setSelectedRegionId(clickedRegion ? clickedRegion.id : null)
+    }
+  }
+
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (selectMode && !drawing && selectedRegionId) {
+      const { x, y } = getCanvasCoords(e)
+      const region = regions.find((r) => r.id === selectedRegionId)
+      if (region) {
+        const vertexIdx = getVertexAtPoint(x, y, region.polygon, VERTEX_HIT_THRESHOLD)
+        if (vertexIdx !== null) {
+          setDraggingVertex({ regionId: selectedRegionId, vertexIndex: vertexIdx })
+        }
+      }
+    }
+  }
+
+  const handleCanvasMouseMove = (e: React.MouseEvent) => {
+    if (draggingVertex) {
+      const { x, y } = getCanvasCoords(e)
+      const region = regions.find((r) => r.id === draggingVertex.regionId)
+      if (region) {
+        const newPolygon = [...region.polygon]
+        newPolygon[draggingVertex.vertexIndex] = { x, y }
+        const newRegions = regions.map((r) =>
+          r.id === draggingVertex.regionId ? { ...r, polygon: newPolygon } : r
+        )
+        onRegionsChange(newRegions)
+      }
+    }
+  }
+
+  const handleCanvasMouseUp = () => {
+    setDraggingVertex(null)
   }
 
   const handleDoubleClick = () => {
@@ -141,7 +225,10 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
     setDrawing(false)
   }
 
-  const removeRegion = (id: string) => onRegionsChange(regions.filter((r) => r.id !== id))
+  const removeRegion = (id: string) => {
+    onRegionsChange(regions.filter((r) => r.id !== id))
+    setSelectedRegionId(null)
+  }
   const removeLastRegion = () => { if (regions.length > 0) onRegionsChange(regions.slice(0, -1)) }
   const clearAll = () => { if (confirm('Clear all mapped surface regions?')) onRegionsChange([]) }
 
@@ -151,10 +238,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
     try {
       const res = await api.post('/ai/detect-regions', { image_url: `/uploads/${imagePath}` })
       if (res.data.success && res.data.regions) {
-        // AI returns regions; if they contain mask data, convert to bounding polygon
-        // SAM-2 may return masks or boxes — we map them to polygon outlines
         const detected = res.data.regions.map((r: any, idx: number) => {
-          // Determine region type based on heuristics or default to 'wall'
           let regionType = 'wall'
           const label = (r.label || r.type || '').toLowerCase()
           if (label.includes('window') || label.includes('trim')) regionType = 'window'
@@ -164,10 +248,8 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
           else if (label.includes('parapet') || label.includes('terrace')) regionType = 'parapet'
           else if (label.includes('gate') || label.includes('entrance')) regionType = 'gate'
 
-          // Convert bbox/mask to polygon points
           let polygon: { x: number; y: number }[] = []
           if (r.bbox) {
-            // bbox = [x1, y1, x2, y2]
             const [x1, y1, x2, y2] = r.bbox
             polygon = [
               { x: x1, y: y1 },
@@ -178,8 +260,6 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
           } else if (r.polygon) {
             polygon = r.polygon
           } else if (r.mask) {
-            // If raw mask, create a bounding box from mask extents
-            // This is a simplification — ideally we'd run contour detection
             polygon = [
               { x: r.x || 0, y: r.y || 0 },
               { x: (r.x || 0) + (r.width || 200), y: r.y || 0 },
@@ -189,7 +269,6 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
           } else if (r.points && Array.isArray(r.points)) {
             polygon = r.points.map((p: any) => ({ x: p.x ?? p[0], y: p.y ?? p[1] }))
           } else {
-            // Fallback: create a placeholder rectangle spread across the image
             const w = imgRef.current?.width || 800
             const h = imgRef.current?.height || 600
             const offset = idx * 60
@@ -224,6 +303,55 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
       setDetectError(err.response?.data?.error || 'AI detection failed. Please map surfaces manually.')
     } finally {
       setDetecting(false)
+    }
+  }
+
+  const handleRefineWithAI = async () => {
+    if (regions.length === 0) return
+    setRefineError('')
+    setRefining(true)
+    try {
+      const payload = regions
+        .filter((r) => r.polygon.length >= 3)
+        .map((r) => ({ type: r.type, polygon: r.polygon }))
+      const result = await refineRegions(imagePath, payload)
+      if (result.success && result.regions) {
+        const refined = result.regions.map((r: any, idx: number) => {
+          let regionType = r.type || 'wall'
+          let polygon: { x: number; y: number }[] = []
+          if (r.polygon) {
+            polygon = r.polygon
+          } else if (r.bbox) {
+            const [x1, y1, x2, y2] = r.bbox
+            polygon = [
+              { x: x1, y: y1 },
+              { x: x2, y: y1 },
+              { x: x2, y: y2 },
+              { x: x1, y: y2 },
+            ]
+          } else {
+            const existing = regions[idx] || regions[0]
+            polygon = existing.polygon
+          }
+          const existing = regions[idx]
+          return {
+            id: existing ? existing.id : `refined_${Date.now()}_${idx}`,
+            type: regionType,
+            polygon,
+            area_sqft: r.area || existing?.area_sqft || null,
+            selected_material: existing?.selected_material || null,
+            notes: r.label || existing?.notes || '',
+          }
+        })
+        onRegionsChange(refined)
+        setRefineError(`AI refined ${refined.length} regions. Review and adjust as needed.`)
+      } else {
+        setRefineError(result.error || 'AI refinement failed. Please try again.')
+      }
+    } catch (err: any) {
+      setRefineError(err.response?.data?.detail || err.message || 'AI refinement failed. Please try again.')
+    } finally {
+      setRefining(false)
     }
   }
 
@@ -295,7 +423,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
             {detecting ? '⏳ Detecting...' : '🤖 Auto-Detect Surfaces'}
           </button>
           <button
-            onClick={() => { setDrawing(!drawing); setCurrentPolygon([]) }}
+            onClick={() => { setDrawing(!drawing); setCurrentPolygon([]); setSelectedRegionId(null) }}
             style={{
               ...btnBase,
               background: drawing ? 'rgba(239,68,68,0.12)' : '#f5a623',
@@ -305,9 +433,40 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
           >
             {drawing ? 'Cancel Drawing' : '+ Draw Manually'}
           </button>
+          <button
+            onClick={() => setSelectMode(!selectMode)}
+            style={{
+              ...btnBase,
+              background: selectMode ? 'rgba(96,165,250,0.12)' : '#111827',
+              color: selectMode ? '#60a5fa' : '#94a3b8',
+              borderColor: selectMode ? 'rgba(96,165,250,0.4)' : '#2d3748',
+            }}
+          >
+            {selectMode ? '✓ Select Mode' : '✎ Select Mode'}
+          </button>
+          {regions.length > 0 && (
+            <button
+              onClick={handleRefineWithAI}
+              disabled={refining || regions.length === 0}
+              style={{
+                ...btnBase,
+                background: refining ? '#1e2a45' : 'linear-gradient(135deg, #10b981, #059669)',
+                color: '#ffffff',
+                borderColor: 'transparent',
+                opacity: refining ? 0.6 : 1,
+              }}
+            >
+              {refining ? '⏳ Refining...' : '🤖 Refine with AI'}
+            </button>
+          )}
           {drawing && (
             <span style={{ color: '#f5a623', fontSize: 12, fontWeight: 600 }}>
               Click points around surface. Double-click to close boundary.
+            </span>
+          )}
+          {selectMode && (
+            <span style={{ color: '#60a5fa', fontSize: 12, fontWeight: 600 }}>
+              Click a region to select, drag vertex handles to adjust.
             </span>
           )}
         </div>
@@ -342,6 +501,19 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
         </div>
       )}
 
+      {/* Refine Status */}
+      {refineError && (
+        <div style={{
+          marginBottom: 12, padding: '8px 14px', borderRadius: 10,
+          background: refineError.startsWith('AI refined') ? 'rgba(16,185,129,0.08)' : 'rgba(245,166,35,0.08)',
+          border: `1px solid ${refineError.startsWith('AI refined') ? 'rgba(16,185,129,0.3)' : 'rgba(245,166,35,0.3)'}`,
+          color: refineError.startsWith('AI refined') ? '#6ee7b7' : '#fcd34d',
+          fontSize: 12, fontWeight: 500,
+        }}>
+          {refineError}
+        </div>
+      )}
+
       {/* Canvas */}
       <div style={{ borderRadius: 14, overflow: 'hidden', border: '1px solid #1f2937', background: '#090d16', minHeight: 350, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {!imageLoaded && (
@@ -349,9 +521,13 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
         )}
         <canvas
           ref={canvasRef}
-          onClick={handleMouseDown}
+          onClick={handleCanvasClick}
           onDoubleClick={handleDoubleClick}
-          style={{ width: '100%', height: 'auto', cursor: 'crosshair', maxHeight: 520, objectFit: 'contain', display: imageLoaded ? 'block' : 'none' }}
+          onMouseDown={selectMode ? handleCanvasMouseDown : undefined}
+          onMouseMove={selectMode ? handleCanvasMouseMove : undefined}
+          onMouseUp={selectMode ? handleCanvasMouseUp : undefined}
+          onMouseLeave={selectMode ? handleCanvasMouseUp : undefined}
+          style={{ width: '100%', height: 'auto', cursor: selectMode ? (draggingVertex ? 'grabbing' : 'pointer') : 'crosshair', maxHeight: 520, objectFit: 'contain', display: imageLoaded ? 'block' : 'none' }}
         />
       </div>
 
@@ -368,10 +544,11 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {regions.map((r, idx) => {
               const typeInfo = REGION_TYPES.find((x) => x.value === r.type)
+              const isSelected = r.id === selectedRegionId
               return (
                 <div
                   key={r.id}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderRadius: 10, background: '#111827', border: '1px solid #1f2937', fontSize: 12, color: '#e2e8f0', fontWeight: 500 }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderRadius: 10, background: isSelected ? '#1e2a45' : '#111827', border: `1px solid ${isSelected ? '#f5a623' : '#1f2937'}`, fontSize: 12, color: '#e2e8f0', fontWeight: 500 }}
                 >
                   <span style={{ width: 10, height: 10, borderRadius: '50%', background: typeInfo?.color || '#f5a623', display: 'inline-block' }} />
                   <span>#{idx + 1} {typeInfo?.label || r.type}</span>
