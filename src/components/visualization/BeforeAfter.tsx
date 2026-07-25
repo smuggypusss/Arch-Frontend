@@ -80,8 +80,10 @@ export default function BeforeAfter({
   const [isDragging, setIsDragging] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [aiGenerating, setAiGenerating] = useState(false)
+  const [aiProgress, setAiProgress] = useState(0)
+  const [aiStatus, setAiStatus] = useState('')
   const [aiError, setAiError] = useState<string | null>(null)
-  const [aiGenerated, setAiGenerated] = useState(false)
+  const [aiGenerated, setAiGenerated] = useState(!!generatedImage)
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(800)
   const [preview, setPreview] = useState(generatedImage || '')
@@ -158,7 +160,6 @@ export default function BeforeAfter({
           })
 
           const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
-          // Don't overwrite AI-generated preview with texture overlay
           if (!aiGenerated) {
             setPreview(dataUrl)
             onGenerated(dataUrl)
@@ -175,19 +176,54 @@ export default function BeforeAfter({
   const handleAIGenerate = async () => {
     setAiGenerating(true)
     setAiError(null)
+    setAiProgress(0)
+    setAiStatus('Initializing AI engine & analyzing facades...')
+
+    const assigned = regions.filter((r) => r.selected_material)
+    const totalSteps = assigned.length
+
+    let currentProgress = 5
+    const progressInterval = setInterval(() => {
+      if (currentProgress < 15) {
+        currentProgress += Math.random() * 3 + 1
+        setAiStatus('Initializing AI Engine and preparing high-fidelity masks...')
+      } else if (currentProgress < 85) {
+        const regionIndex = Math.min(
+          Math.floor(((currentProgress - 15) / 70) * totalSteps),
+          totalSteps - 1
+        )
+        const activeRegion = assigned[regionIndex]
+        if (activeRegion) {
+          const mat = materials.find((m) => String(m.id) === activeRegion.selected_material)
+          const matName = mat?.name || 'materials'
+          setAiStatus(`Redesigning ${activeRegion.type} surface with ${matName}...`)
+        }
+        currentProgress += Math.random() * 2 + 0.5
+      } else if (currentProgress < 95) {
+        currentProgress += Math.random() * 0.8 + 0.2
+        setAiStatus('Blending generated textures and computing photorealistic shadows...')
+      } else if (currentProgress < 99) {
+        currentProgress += 0.1
+        setAiStatus('Finalizing high-resolution rendering exports...')
+      }
+      setAiProgress(Math.min(99, Math.round(currentProgress)))
+    }, 280)
+
     try {
-      const payload = regions
-        .filter((r) => r.selected_material)
-        .map((r) => {
-          const mat = materials.find((m) => String(m.id) === r.selected_material)
-          return {
-            type: r.type,
-            selected_material: mat?.name || 'Unknown',
-            polygon: r.polygon || [],
-          }
-        })
+      const payload = assigned.map((r) => {
+        const mat = materials.find((m) => String(m.id) === r.selected_material)
+        return {
+          type: r.type,
+          selected_material: mat?.name || 'Unknown',
+          polygon: r.polygon || [],
+        }
+      })
       const result = await generateAIPreview(imagePath, payload)
+      clearInterval(progressInterval)
+
       if (result.success && result.generated_image_url) {
+        setAiProgress(100)
+        setAiStatus('AI Generation Successful!')
         setAiGenerated(true)
         setPreview(result.generated_image_url)
         onGenerated(result.generated_image_url)
@@ -195,6 +231,7 @@ export default function BeforeAfter({
         setAiError(result.error || 'AI generation failed')
       }
     } catch (err: any) {
+      clearInterval(progressInterval)
       setAiError(err.response?.data?.detail || err.message || 'AI generation failed')
     } finally {
       setAiGenerating(false)
@@ -203,8 +240,6 @@ export default function BeforeAfter({
 
   const assignedCount = regions.filter((r) => r.selected_material).length
 
-  // Auto-generate texture preview on mount if materials assigned
-  // Skip if AI has already generated a preview
   useEffect(() => {
     if (assignedCount > 0 && !preview && !generating && !aiGenerating && !aiGenerated) {
       handleGenerate()
@@ -213,40 +248,91 @@ export default function BeforeAfter({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/40 p-5 rounded-2xl border border-slate-800/80 backdrop-blur-sm">
         <div>
-          <h2 className="font-display text-2xl font-bold text-white">Visual Preview Comparison</h2>
-          <p className="text-slate-300 text-sm mt-1">
-            Slide horizontally to compare the original building photo with your redesigned material preview.
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wider font-extrabold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+              Interactive Design
+            </span>
+            <span className="px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wider font-extrabold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              Ready
+            </span>
+          </div>
+          <h2 className="font-display text-2xl font-black text-white mt-1.5">Visual Preview Comparison</h2>
+          <p className="text-slate-400 text-sm mt-1 max-w-2xl leading-relaxed">
+            Drag the handle horizontally to interactively compare your original building exterior with the photorealistic AI-redesigned premium rendering.
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          {!preview && (
+          {preview && (
             <button
               onClick={handleGenerate}
-              disabled={generating || assignedCount === 0}
-              className="btn-secondary px-4 py-2 rounded-xl text-xs font-bold disabled:opacity-30"
+              disabled={generating || aiGenerating}
+              className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-300 bg-slate-800 border border-slate-700/80 hover:bg-slate-700 hover:text-white transition-all duration-200 disabled:opacity-30"
             >
-              {generating ? 'Generating...' : 'Texture Overlay'}
+              {generating ? 'Updating...' : 'Texture Overlay'}
             </button>
           )}
           <button
             onClick={handleAIGenerate}
             disabled={aiGenerating || assignedCount === 0}
-            className="btn-primary px-5 py-2 rounded-xl text-xs font-bold shadow-md disabled:opacity-30 shrink-0"
+            className="px-6 py-2.5 rounded-xl text-xs font-black tracking-wide text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:brightness-110 active:scale-98 shadow-lg shadow-amber-500/20 transition-all duration-200 disabled:opacity-30 disabled:pointer-events-none flex items-center gap-2"
           >
-            {aiGenerating ? 'Generating AI Photo...' : '🤖 Generate AI Photo'}
+            <span>🤖</span> Generate AI Photo
           </button>
         </div>
       </div>
 
       {aiError && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-xs p-3 rounded-xl">
-          {aiError}
+        <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-4 rounded-xl flex items-center gap-2.5">
+          <span className="text-lg">⚠️</span>
+          <div>
+            <span className="font-bold">Generation Unsuccessful:</span> {aiError}
+          </div>
         </div>
       )}
 
-      {preview ? (
+      {/* RENDER DYNAMIC PROGRESS LOADER OVERLAY */}
+      {aiGenerating ? (
+        <div className="w-full min-h-[400px] sm:min-h-[480px] rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-col items-center justify-center p-8 backdrop-blur-md relative overflow-hidden shadow-2xl">
+          {/* Glowing absolute backgrounds */}
+          <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-64 h-64 bg-amber-500/10 rounded-full blur-[80px]" />
+          <div className="absolute bottom-1/4 left-1/3 w-48 h-48 bg-indigo-500/5 rounded-full blur-[60px]" />
+
+          <div className="relative z-10 w-full max-w-md text-center space-y-6">
+            <div className="relative mx-auto w-16 h-16 flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full border-2 border-amber-500/20 animate-ping" />
+              <div className="absolute inset-0 rounded-full border-t-2 border-r-2 border-amber-400 animate-spin" />
+              <span className="text-2xl animate-pulse">✨</span>
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-white font-extrabold text-lg tracking-tight">E2M Intelligent Renovation</h3>
+              <p className="text-slate-400 text-xs min-h-[32px] leading-relaxed transition-all duration-300 px-4">
+                {aiStatus}
+              </p>
+            </div>
+
+            {/* PROGRESS BAR BAR */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs px-1">
+                <span className="text-slate-500 font-medium">Processing facades</span>
+                <span className="text-amber-400 font-black">{aiProgress}%</span>
+              </div>
+              <div className="w-full h-3 bg-slate-900 rounded-full border border-slate-800 p-0.5 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)] transition-all duration-300 ease-out"
+                  style={{ width: `${aiProgress}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="text-[10px] text-slate-500 flex items-center justify-center gap-1.5">
+              <span>⚡</span> Highly optimized AI synthesis takes approx. 10-15 seconds.
+            </div>
+          </div>
+        </div>
+      ) : preview ? (
         <div className="space-y-4">
           <div
             ref={containerRef}
@@ -257,7 +343,7 @@ export default function BeforeAfter({
             onTouchStart={(e) => { setIsDragging(true); handleMove(e.touches[0].clientX) }}
             onTouchEnd={() => setIsDragging(false)}
             onTouchMove={handleTouchMove}
-            className="comparison-slider relative w-full h-[400px] sm:h-[480px] overflow-hidden rounded-2xl bg-[#090e1a] cursor-ew-resize select-none border border-[#253556] shadow-xl"
+            className="comparison-slider relative w-full h-[400px] sm:h-[480px] overflow-hidden rounded-2xl bg-[#090e1a] cursor-ew-resize select-none border border-[#1e2a45] shadow-2xl"
           >
             <img
               src={`/uploads/${imagePath}`}
@@ -265,7 +351,7 @@ export default function BeforeAfter({
               className="absolute top-0 left-0 w-full h-full object-contain pointer-events-none"
             />
             <div
-              className="absolute top-0 left-0 h-full overflow-hidden pointer-events-none"
+              className="absolute top-0 left-0 h-full overflow-hidden pointer-events-none border-r border-amber-400"
               style={{ width: `${sliderPos}%` }}
             >
               <img
@@ -279,14 +365,14 @@ export default function BeforeAfter({
               className="absolute top-0 bottom-0 w-1 bg-amber-400 cursor-ew-resize z-20 pointer-events-none"
               style={{ left: `${sliderPos}%` }}
             >
-              <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-8 h-8 bg-amber-500 border-2 border-[#0b0f19] text-[#0b0f19] font-bold rounded-full shadow-lg flex items-center justify-center text-xs">
+              <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-10 h-10 bg-amber-400 border-4 border-slate-950 text-slate-950 font-black rounded-full shadow-2xl flex items-center justify-center text-sm transform hover:scale-110 active:scale-95 transition-all">
                 ⟷
               </div>
             </div>
-            <div className="absolute top-3 left-3 bg-[#0b0f19]/90 border border-[#253556] text-white text-[11px] font-bold px-2.5 py-1 rounded-lg z-10">
+            <div className="absolute top-4 left-4 bg-slate-950/80 border border-slate-800 text-white text-[11px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-lg z-10 backdrop-blur-sm shadow-md">
               Original Photo
             </div>
-            <div className="absolute top-3 right-3 bg-amber-500 text-[#0b0f19] text-[11px] font-extrabold px-2.5 py-1 rounded-lg z-10">
+            <div className="absolute top-4 right-4 bg-amber-400 border border-amber-500 text-slate-950 text-[11px] font-black tracking-wider uppercase px-3 py-1.5 rounded-lg z-10 shadow-md">
               Redesigned Preview
             </div>
           </div>
@@ -295,25 +381,25 @@ export default function BeforeAfter({
             <button
               onClick={handleGenerate}
               disabled={generating}
-              className="btn-secondary px-4 py-2 rounded-xl text-xs font-bold"
+              className="px-5 py-2 rounded-xl text-xs font-bold text-slate-400 bg-slate-900 border border-slate-800 hover:text-white hover:bg-slate-800 transition-all duration-200"
             >
               🔄 Refresh Preview Overlay
             </button>
           </div>
         </div>
       ) : (
-        <div className="text-center py-14 bg-[#141d30] rounded-2xl border border-[#253556] max-w-md mx-auto">
-          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-2xl flex items-center justify-center mx-auto mb-4">
+        <div className="text-center py-16 bg-[#0e1726]/40 rounded-2xl border border-slate-800/80 max-w-md mx-auto shadow-xl backdrop-blur-sm">
+          <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 text-3xl flex items-center justify-center mx-auto mb-5 shadow-inner">
             ✨
           </div>
-          <h3 className="text-white font-bold text-lg mb-1">Ready to generate your preview</h3>
-          <p className="text-slate-300 text-xs mb-5 max-w-xs mx-auto leading-relaxed">
-            Click below to apply selected materials onto your mapped building surfaces.
+          <h3 className="text-white font-black text-xl mb-1.5 tracking-tight">Ready to generate your preview</h3>
+          <p className="text-slate-400 text-xs mb-6 max-w-xs mx-auto leading-relaxed">
+            Click below to instantly apply chosen premium materials to each mapped exterior facade using smart design overlays.
           </p>
           <button
             onClick={handleGenerate}
             disabled={generating || assignedCount === 0}
-            className="btn-primary px-6 py-2.5 rounded-xl text-xs font-bold shadow-md disabled:opacity-30"
+            className="px-6 py-3 rounded-xl text-xs font-black tracking-wider uppercase text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:brightness-110 active:scale-98 shadow-lg shadow-amber-500/20 transition-all duration-200 disabled:opacity-30"
           >
             {generating ? 'Generating Visual Preview...' : 'Generate Visual Preview →'}
           </button>
@@ -321,15 +407,28 @@ export default function BeforeAfter({
       )}
 
       {assignedCount > 0 && (
-        <div className="bg-[#141d30] rounded-2xl border border-[#253556] p-4">
-          <h4 className="text-white font-bold text-sm mb-3">Applied Materials</h4>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="bg-[#0f172a]/50 backdrop-blur-sm rounded-2xl border border-slate-800 p-5 shadow-lg">
+          <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
+            <h4 className="text-white font-extrabold text-sm tracking-wide">Renovation Surface Details</h4>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300">
+              {assignedCount} surfaces mapped
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {regions.filter((r) => r.selected_material).map((r) => {
               const mat = materials.find((m) => String(m.id) === r.selected_material)
               return (
-                <div key={r.id} className="flex items-center justify-between bg-[#0b0f19] rounded-lg px-3 py-2">
-                  <span className="text-slate-300 text-xs capitalize">{r.type}</span>
-                  <span className="text-amber-400 text-xs font-bold">{mat?.name}</span>
+                <div key={r.id} className="flex items-center justify-between bg-slate-950/40 border border-slate-900 rounded-xl px-4 py-3 hover:border-slate-800 transition-all duration-150">
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full"
+                      style={{ backgroundColor: CATEGORY_COLORS[mat?.category || 'paint'] || 'rgba(245, 166, 35, 0.75)' }}
+                    />
+                    <span className="text-slate-300 text-xs font-semibold capitalize">{r.type}</span>
+                  </div>
+                  <span className="text-amber-400 text-xs font-extrabold bg-amber-500/5 px-2.5 py-1 rounded-lg border border-amber-500/10">
+                    {mat?.name}
+                  </span>
                 </div>
               )
             })}
@@ -337,11 +436,17 @@ export default function BeforeAfter({
         </div>
       )}
 
-      <div className="flex items-center justify-between border-t border-[#1e2a45] pt-4">
-        <button onClick={onBack} className="btn-secondary px-4 py-2 rounded-xl text-xs font-semibold">
+      <div className="flex items-center justify-between border-t border-slate-800/80 pt-6">
+        <button
+          onClick={onBack}
+          className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-400 bg-slate-900 border border-slate-800 hover:text-white hover:bg-slate-800 transition-all"
+        >
           ← Back to Material Catalog
         </button>
-        <button onClick={onContinue} className="btn-primary px-6 py-2.5 rounded-xl text-xs font-bold shadow-md">
+        <button
+          onClick={onContinue}
+          className="px-6 py-3 rounded-xl text-xs font-black tracking-wider uppercase text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:brightness-110 active:scale-98 shadow-lg shadow-amber-500/10 transition-all duration-200"
+        >
           View Cost Estimate & PDF →
         </button>
       </div>
