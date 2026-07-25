@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react'
+import React, { useRef, useEffect, useState, useCallback } from 'react'
 import api, { getAssetURL, refineRegions } from '../../services/api'
 
 interface Region {
@@ -35,7 +35,7 @@ const btnBase: React.CSSProperties = {
   alignItems: 'center', gap: 8, transition: 'all 0.15s',
 }
 
-const VERTEX_HIT_THRESHOLD = 12 // pixels (in image coordinates, scaled)
+const VERTEX_HIT_THRESHOLD = 16 // pixels in image coordinates
 
 function pointInPolygon(x: number, y: number, polygon: { x: number; y: number }[]): boolean {
   let inside = false
@@ -70,9 +70,11 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
   const [imageLoaded, setImageLoaded] = useState(false)
   const [detecting, setDetecting] = useState(false)
   const [detectError, setDetectError] = useState('')
-  const [selectMode, setSelectMode] = useState(false)
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null)
-  const [draggingVertex, setDraggingVertex] = useState<{ regionId: string; vertexIndex: number } | null>(null)
+  // Local state for vertex editing - avoids calling onRegionsChange on every mouse move
+  const [editingPolygon, setEditingPolygon] = useState<{ x: number; y: number }[] | null>(null)
+  const [editingRegionId, setEditingRegionId] = useState<string | null>(null)
+  const editingVertexRef = useRef<number | null>(null)
   const [refining, setRefining] = useState(false)
   const [refineError, setRefineError] = useState('')
 
@@ -100,17 +102,20 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
       const typeInfo = REGION_TYPES.find((t) => t.value === region.type)
       const color = typeInfo?.color || '#f5a623'
       const isSelected = region.id === selectedRegionId
+      // Use editing polygon if this region is being edited
+      const polygon = (editingRegionId === region.id && editingPolygon) ? editingPolygon : region.polygon
+      if (polygon.length < 2) return
       ctx.beginPath()
-      ctx.moveTo(region.polygon[0].x, region.polygon[0].y)
-      for (let i = 1; i < region.polygon.length; i++) ctx.lineTo(region.polygon[i].x, region.polygon[i].y)
+      ctx.moveTo(polygon[0].x, polygon[0].y)
+      for (let i = 1; i < polygon.length; i++) ctx.lineTo(polygon[i].x, polygon[i].y)
       ctx.closePath()
       ctx.fillStyle = color + (isSelected ? '60' : '40')
       ctx.fill()
       ctx.strokeStyle = isSelected ? '#ffffff' : color
       ctx.lineWidth = isSelected ? 4 : 3
       ctx.stroke()
-      const avgX = region.polygon.reduce((s, p) => s + p.x, 0) / region.polygon.length
-      const avgY = region.polygon.reduce((s, p) => s + p.y, 0) / region.polygon.length
+      const avgX = polygon.reduce((s: number, p: { x: number; y: number }) => s + p.x, 0) / polygon.length
+      const avgY = polygon.reduce((s: number, p: { x: number; y: number }) => s + p.y, 0) / polygon.length
       ctx.fillStyle = '#ffffff'
       ctx.font = 'bold 16px Inter, sans-serif'
       ctx.shadowColor = '#000'
@@ -119,8 +124,8 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
       ctx.shadowBlur = 0
 
       // Draw vertex handles for selected region
-      if (isSelected && selectMode) {
-        region.polygon.forEach((p) => {
+      if (isSelected) {
+        polygon.forEach((p: { x: number; y: number }) => {
           ctx.beginPath()
           ctx.arc(p.x, p.y, 6, 0, 2 * Math.PI)
           ctx.fillStyle = '#f5a623'
@@ -140,7 +145,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
       ctx.setLineDash([8, 6])
       ctx.stroke()
       ctx.setLineDash([])
-      currentPolygon.forEach((p) => {
+      currentPolygon.forEach((p: { x: number; y: number }) => {
         ctx.beginPath()
         ctx.arc(p.x, p.y, 6, 0, 2 * Math.PI)
         ctx.fillStyle = '#f5a623'
@@ -150,7 +155,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
         ctx.stroke()
       })
     }
-  }, [regions, currentPolygon, selectedRegionId, selectMode])
+  }, [regions, currentPolygon, selectedRegionId, editingPolygon, editingRegionId])
 
   useEffect(() => { if (imageLoaded) drawAll() }, [imageLoaded, drawAll])
 
@@ -166,47 +171,51 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
   const handleCanvasClick = (e: React.MouseEvent) => {
     if (drawing) {
       const { x, y } = getCanvasCoords(e)
-      setCurrentPolygon((prev) => [...prev, { x, y }])
+      setCurrentPolygon((prev: { x: number; y: number }[]) => [...prev, { x, y }])
       return
     }
-    if (selectMode) {
-      const { x, y } = getCanvasCoords(e)
-      if (draggingVertex) return // don't select on click if we were dragging
-      const clickedRegion = regions.find((r) => pointInPolygon(x, y, r.polygon))
-      setSelectedRegionId(clickedRegion ? clickedRegion.id : null)
-    }
+    // Don't select if we just finished editing a vertex
+    if (editingRegionId) return
+    const { x, y } = getCanvasCoords(e)
+    const clickedRegion = regions.find((r) => pointInPolygon(x, y, r.polygon))
+    setSelectedRegionId(clickedRegion ? clickedRegion.id : null)
   }
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    if (selectMode && !drawing && selectedRegionId) {
-      const { x, y } = getCanvasCoords(e)
-      const region = regions.find((r) => r.id === selectedRegionId)
-      if (region) {
-        const vertexIdx = getVertexAtPoint(x, y, region.polygon, VERTEX_HIT_THRESHOLD)
-        if (vertexIdx !== null) {
-          setDraggingVertex({ regionId: selectedRegionId, vertexIndex: vertexIdx })
-        }
+    if (drawing || !selectedRegionId) return
+    const { x, y } = getCanvasCoords(e)
+    const region = regions.find((r) => r.id === selectedRegionId)
+    if (region) {
+      const vertexIdx = getVertexAtPoint(x, y, region.polygon, VERTEX_HIT_THRESHOLD)
+      if (vertexIdx !== null) {
+        setEditingRegionId(selectedRegionId)
+        setEditingPolygon([...region.polygon])
+        editingVertexRef.current = vertexIdx
       }
     }
   }
 
   const handleCanvasMouseMove = (e: React.MouseEvent) => {
-    if (draggingVertex) {
-      const { x, y } = getCanvasCoords(e)
-      const region = regions.find((r) => r.id === draggingVertex.regionId)
-      if (region) {
-        const newPolygon = [...region.polygon]
-        newPolygon[draggingVertex.vertexIndex] = { x, y }
-        const newRegions = regions.map((r) =>
-          r.id === draggingVertex.regionId ? { ...r, polygon: newPolygon } : r
-        )
-        onRegionsChange(newRegions)
-      }
-    }
+    if (!editingPolygon || !editingRegionId || editingVertexRef.current === null) return
+    const { x, y } = getCanvasCoords(e)
+    setEditingPolygon((prev: { x: number; y: number }[] | null) => {
+      if (!prev) return prev
+      const newPolygon = [...prev]
+      newPolygon[editingVertexRef.current!] = { x, y }
+      return newPolygon
+    })
   }
 
   const handleCanvasMouseUp = () => {
-    setDraggingVertex(null)
+    if (editingPolygon && editingRegionId) {
+      const newRegions = regions.map((r) =>
+        r.id === editingRegionId ? { ...r, polygon: editingPolygon } : r
+      )
+      onRegionsChange(newRegions)
+    }
+    setEditingPolygon(null)
+    setEditingRegionId(null)
+    editingVertexRef.current = null
   }
 
   const handleDoubleClick = () => {
@@ -228,6 +237,8 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
   const removeRegion = (id: string) => {
     onRegionsChange(regions.filter((r) => r.id !== id))
     setSelectedRegionId(null)
+    setEditingRegionId(null)
+    setEditingPolygon(null)
   }
   const removeLastRegion = () => { if (regions.length > 0) onRegionsChange(regions.slice(0, -1)) }
   const clearAll = () => { if (confirm('Clear all mapped surface regions?')) onRegionsChange([]) }
@@ -362,7 +373,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
         <div>
           <h2 style={{ fontFamily: 'Outfit, sans-serif', fontSize: 20, fontWeight: 700, color: '#ffffff', margin: '0 0 4px' }}>Map Building Surfaces</h2>
           <p style={{ color: '#94a3b8', fontSize: 13, margin: 0 }}>
-            Select a surface category, click points to map surfaces, double-click to finish each region.
+            Click to select a region, drag vertex handles to adjust. Click "Draw Manually" to add new surfaces.
           </p>
         </div>
         <button
@@ -423,7 +434,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
             {detecting ? '⏳ Detecting...' : '🤖 Auto-Detect Surfaces'}
           </button>
           <button
-            onClick={() => { setDrawing(!drawing); setCurrentPolygon([]); setSelectedRegionId(null) }}
+            onClick={() => { setDrawing(!drawing); setCurrentPolygon([]); setSelectedRegionId(null); setEditingRegionId(null); setEditingPolygon(null) }}
             style={{
               ...btnBase,
               background: drawing ? 'rgba(239,68,68,0.12)' : '#f5a623',
@@ -432,17 +443,6 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
             }}
           >
             {drawing ? 'Cancel Drawing' : '+ Draw Manually'}
-          </button>
-          <button
-            onClick={() => setSelectMode(!selectMode)}
-            style={{
-              ...btnBase,
-              background: selectMode ? 'rgba(96,165,250,0.12)' : '#111827',
-              color: selectMode ? '#60a5fa' : '#94a3b8',
-              borderColor: selectMode ? 'rgba(96,165,250,0.4)' : '#2d3748',
-            }}
-          >
-            {selectMode ? '✓ Select Mode' : '✎ Select Mode'}
           </button>
           {regions.length > 0 && (
             <button
@@ -464,7 +464,7 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
               Click points around surface. Double-click to close boundary.
             </span>
           )}
-          {selectMode && (
+          {!drawing && regions.length > 0 && (
             <span style={{ color: '#60a5fa', fontSize: 12, fontWeight: 600 }}>
               Click a region to select, drag vertex handles to adjust.
             </span>
@@ -523,11 +523,11 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
           ref={canvasRef}
           onClick={handleCanvasClick}
           onDoubleClick={handleDoubleClick}
-          onMouseDown={selectMode ? handleCanvasMouseDown : undefined}
-          onMouseMove={selectMode ? handleCanvasMouseMove : undefined}
-          onMouseUp={selectMode ? handleCanvasMouseUp : undefined}
-          onMouseLeave={selectMode ? handleCanvasMouseUp : undefined}
-          style={{ width: '100%', height: 'auto', cursor: selectMode ? (draggingVertex ? 'grabbing' : 'pointer') : 'crosshair', maxHeight: 520, objectFit: 'contain', display: imageLoaded ? 'block' : 'none' }}
+          onMouseDown={handleCanvasMouseDown}
+          onMouseMove={handleCanvasMouseMove}
+          onMouseUp={handleCanvasMouseUp}
+          onMouseLeave={handleCanvasMouseUp}
+          style={{ width: '100%', height: 'auto', cursor: drawing ? 'crosshair' : (editingPolygon ? 'grabbing' : 'pointer'), maxHeight: 520, objectFit: 'contain', display: imageLoaded ? 'block' : 'none' }}
         />
       </div>
 
@@ -538,23 +538,29 @@ export default function RegionCanvas({ imagePath, regions, onRegionsChange, onCo
         </p>
         {regions.length === 0 ? (
           <p style={{ color: '#64748b', fontSize: 12, fontStyle: 'italic' }}>
-            No surfaces mapped yet. Click "Start Drawing Polygon" above to outline walls, pillars, or balconies.
+            No surfaces mapped yet. Click "+ Draw Manually" above to outline walls, pillars, or balconies.
           </p>
         ) : (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
             {regions.map((r, idx) => {
               const typeInfo = REGION_TYPES.find((x) => x.value === r.type)
               const isSelected = r.id === selectedRegionId
               return (
                 <div
                   key={r.id}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderRadius: 10, background: isSelected ? '#1e2a45' : '#111827', border: `1px solid ${isSelected ? '#f5a623' : '#1f2937'}`, fontSize: 12, color: '#e2e8f0', fontWeight: 500 }}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 8,
+                    background: isSelected ? '#1e2a45' : '#111827',
+                    border: `1px solid ${isSelected ? '#f5a623' : '#1f2937'}`,
+                    fontSize: 11, color: '#e2e8f0', fontWeight: 500,
+                    maxWidth: '100%', boxSizing: 'border-box',
+                  }}
                 >
-                  <span style={{ width: 10, height: 10, borderRadius: '50%', background: typeInfo?.color || '#f5a623', display: 'inline-block' }} />
-                  <span>#{idx + 1} {typeInfo?.label || r.type}</span>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: typeInfo?.color || '#f5a623', display: 'inline-block', flexShrink: 0 }} />
+                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>#{idx + 1} {typeInfo?.label || r.type}</span>
                   <button
                     onClick={() => removeRegion(r.id)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontWeight: 700, fontSize: 14, padding: 0 }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontWeight: 700, fontSize: 14, padding: '0 0 0 4px', lineHeight: 1 }}
                     title="Delete Region"
                   >
                     ×
